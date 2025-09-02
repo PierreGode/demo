@@ -1,0 +1,113 @@
+# .github/workflows/contract-fanout.yml
+name: contract-fanout
+
+on:
+  push:
+    # Only fire when YOUR contract sources change
+    paths:
+      - "apis/**"
+      - "!generated/**"    # don't react to generated files
+
+concurrency:
+  group: contract-fanout-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read   # for this repo; pushing to peers uses the PAT in CROSS_REPO_TOKEN
+
+env:
+  # 👇 List ALL repos in the mesh; each repo will skip itself in the loop.
+  TARGETS: "PierreGode/demo PierreGode/demo1 PierreGode/demo2"
+
+  # 👇 Adjust these to your contract and generator
+  CONTRACT_FILE: "apis/orders/openapi.yaml"
+  GENERATOR_DOCKER_IMAGE: "openapitools/openapi-generator-cli"
+  GENERATOR_ARGS_TS: "-g typescript-fetch -o /local/gen/ts"
+  # Destination path (in the PEER repos) where generated client lives
+  PEER_DEST_TS: "api-clients/orders"
+
+jobs:
+  generate-and-fanout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current repo
+        uses: actions/checkout@v4
+
+      - name: Verify contract exists
+        run: |
+          test -f "$CONTRACT_FILE" || { echo "Missing $CONTRACT_FILE"; exit 1; }
+
+      - name: Set up git user (for committing in peers)
+        run: |
+          git config --global user.email "ci-bot@users.noreply.github.com"
+          git config --global user.name  "CI Bot"
+
+      - name: Generate TypeScript client from OpenAPI
+        run: |
+          rm -rf gen/ts
+          mkdir -p gen/ts
+          docker run --rm -v "$PWD":/local $GENERATOR_DOCKER_IMAGE generate \
+            -i "/local/$CONTRACT_FILE" $GENERATOR_ARGS_TS
+
+      - name: Fan-out to peer repositories (only open PR if there are changes)
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}   # used by gh CLI
+        run: |
+          set -euo pipefail
+
+          THIS_REPO="${GITHUB_REPOSITORY}"
+
+          for REPO in $TARGETS; do
+            # skip self
+            if [ "$REPO" = "$THIS_REPO" ]; then
+              echo "Skipping self: $REPO"
+              continue
+            fi
+
+            echo "::group::Sync to $REPO"
+
+            # fresh clone of the peer
+            rm -rf peer
+            gh repo clone "$REPO" peer -- -q
+            cd peer
+
+            # ensure destination exists
+            mkdir -p "$PEER_DEST_TS"
+
+            # rsync generated -> peer working tree (delete removed files)
+            rsync -a --delete ../gen/ts/ "$PEER_DEST_TS/"
+
+            # stage and detect if anything changed
+            git add -A
+            if git diff --staged --quiet; then
+              echo "No changes to commit for $REPO"
+              cd ..
+              rm -rf peer
+              echo "::endgroup::"
+              continue
+            fi
+
+            # create branch, commit with a loop guard marker, push
+            BR="bot/sync-orders-${GITHUB_SHA::7}"
+            git switch -c "$BR"
+            git commit -m "chore(api): sync generated client from ${THIS_REPO} @ ${GITHUB_SHA} [skip-fanout]"
+            git push -u origin "$BR" -q
+
+            # open PR, capture URL
+            PR_URL=$(gh pr create \
+              --title "Sync API client: orders from ${THIS_REPO}" \
+              --body  "Auto-generated from ${THIS_REPO}@${GITHUB_SHA}\n\n> This PR was created by the fan-out workflow. Changes are limited to generated artifacts in \`$PEER_DEST_TS\`.\n\nIf needed, please update tests/docs accordingly." \
+              --base main \
+              --head "$BR" \
+              --json url \
+              --jq .url)
+
+            echo "Opened PR: $PR_URL"
+
+            # 🔔 Ask Codex to review
+            gh pr comment "$PR_URL" --body "@codex review"
+
+            cd ..
+            rm -rf peer
+            echo "::endgroup::"
+          done
