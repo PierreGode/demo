@@ -1,0 +1,14 @@
+{
+  "name": "contracts",
+  "private": true,
+  "devDependencies": {
+    "@redocly/cli": "^1.16.0",
+    "oasdiff": "^5.10.0"
+  },
+  "scripts": {
+    "lint:api": "redocly lint apis/orders/openapi.yaml",
+    "diff:breaking": "oasdiff breaking --fail-on-changed origin/main:apis/orders/openapi.yaml apis/orders/openapi.yaml || (echo 'Breaking or changed APIs detected'; exit 1)",
+    "diff:changelog": "oasdiff changelog origin/main:apis/orders/openapi.yaml apis/orders/openapi.yaml || true",
+    "test": "npm run lint:api && npm run diff:breaking"
+  }
+}
