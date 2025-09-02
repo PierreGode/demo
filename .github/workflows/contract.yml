@@ -49,9 +49,17 @@ jobs:
           docker run --rm -v "$PWD":/local $GENERATOR_DOCKER_IMAGE generate \
             -i "/local/$CONTRACT_FILE" $GENERATOR_ARGS_TS
 
+      # 🔐 NEW: authenticate gh and wire credentials into git (so git push works cross-repo)
+      - name: Authenticate gh and set up git credentials
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | gh auth login --with-token
+          gh auth setup-git
+
       - name: Fan-out to peer repositories (only open PR if there are changes)
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}   # used by gh CLI
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}   # used by gh CLI and git (via setup-git)
         run: |
           set -euo pipefail
 
