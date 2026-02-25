@@ -1,0 +1,84 @@
+name: tag-deploy
+
+# ──────────────────────────────────────────────────────────────
+# Scenario: Environment-based deployment routed by tag prefix
+#
+# Tag format:  deploy-<environment>-<id>
+# Examples:    deploy-dev-1, deploy-staging-42, deploy-prod-100
+#
+# The workflow parses the environment name from the tag and
+# deploys to the matching GitHub Environment (dev / staging / prod).
+# ──────────────────────────────────────────────────────────────
+
+on:
+  push:
+    tags:
+      - "deploy-*"
+
+jobs:
+  # ── Step 1: Parse the tag to determine the target environment ──
+  resolve-env:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.parse.outputs.environment }}
+      deploy_id:   ${{ steps.parse.outputs.deploy_id }}
+    steps:
+      - name: Parse tag
+        id: parse
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "Raw tag: $TAG"
+
+          # Strip the "deploy-" prefix, then split on the LAST hyphen
+          # deploy-staging-42  → environment=staging, deploy_id=42
+          # deploy-prod-100    → environment=prod,    deploy_id=100
+          REMAINDER="${TAG#deploy-}"
+          ENVIRONMENT="${REMAINDER%-*}"
+          DEPLOY_ID="${REMAINDER##*-}"
+
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "deploy_id=$DEPLOY_ID"     >> "$GITHUB_OUTPUT"
+
+          echo "Resolved → environment=$ENVIRONMENT  deploy_id=$DEPLOY_ID"
+
+  # ── Step 2a: Deploy to DEV (no approval needed) ──
+  deploy-dev:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.environment == 'dev'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to dev
+        run: |
+          echo "Deploying to DEV environment (deploy #${{ needs.resolve-env.outputs.deploy_id }})"
+          echo "Commit: ${GITHUB_SHA}"
+          echo "No approval required — dev is a free-fire zone."
+
+  # ── Step 2b: Deploy to STAGING (simulated gate) ──
+  deploy-staging:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to STAGING environment (deploy #${{ needs.resolve-env.outputs.deploy_id }})"
+          echo "Commit: ${GITHUB_SHA}"
+          echo "In a real setup, the 'staging' environment would have reviewer approval rules."
+
+  # ── Step 2c: Deploy to PROD (strictest gate) ──
+  deploy-prod:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.environment == 'prod'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to production
+        run: |
+          echo "Deploying to PRODUCTION (deploy #${{ needs.resolve-env.outputs.deploy_id }})"
+          echo "Commit: ${GITHUB_SHA}"
+          echo "In a real setup, 'production' would require manual approval + branch protection."

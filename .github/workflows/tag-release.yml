@@ -1,0 +1,71 @@
+name: tag-release
+
+# Trigger ONLY when a tag matching v* is pushed
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. Build — runs on EVERY v* tag
+  # ──────────────────────────────────────────────
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      tag:          ${{ steps.meta.outputs.tag }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract tag metadata
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # A prerelease contains a hyphen after the version, e.g. v1.0.0-beta
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Print build info
+        run: |
+          echo "========================================"
+          echo "  Tag:          ${{ steps.meta.outputs.tag }}"
+          echo "  Prerelease:   ${{ steps.meta.outputs.is_prerelease }}"
+          echo "  Commit SHA:   ${GITHUB_SHA}"
+          echo "  Triggered by: ${GITHUB_ACTOR}"
+          echo "========================================"
+
+      - name: Simulate build
+        run: echo "Building artefacts for ${{ steps.meta.outputs.tag }} ..."
+
+  # ──────────────────────────────────────────────
+  # 2. Release — runs ONLY for stable tags (v1.2.3)
+  # ──────────────────────────────────────────────
+  release:
+    needs: build
+    if: needs.build.outputs.is_prerelease == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish stable release
+        run: |
+          echo "Publishing STABLE release ${{ needs.build.outputs.tag }}"
+          echo "This is where you would upload artefacts, create a GitHub Release, deploy to production, etc."
+
+  # ──────────────────────────────────────────────
+  # 3. Prerelease — runs ONLY for prerelease tags
+  #    (v1.2.3-beta, v1.2.3-rc.1, etc.)
+  # ──────────────────────────────────────────────
+  prerelease:
+    needs: build
+    if: needs.build.outputs.is_prerelease == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish prerelease
+        run: |
+          echo "Publishing PRERELEASE ${{ needs.build.outputs.tag }}"
+          echo "This is where you would deploy to a staging environment, publish a beta package, etc."

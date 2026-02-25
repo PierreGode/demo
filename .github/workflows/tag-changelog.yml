@@ -1,0 +1,81 @@
+name: tag-changelog
+
+# ──────────────────────────────────────────────────────────────
+# Scenario: Automated changelog + GitHub Release creation
+#
+# Tag format:  release-<calver or label>
+# Examples:    release-2024.02, release-2025.01-hotfix, release-sprint-42
+#
+# When a release-* tag is pushed, this workflow:
+#   1. Finds the previous tag
+#   2. Generates a changelog from commit messages between the two tags
+#   3. Creates a GitHub Release with the generated notes
+# ──────────────────────────────────────────────────────────────
+
+on:
+  push:
+    tags:
+      - "release-*"
+
+permissions:
+  contents: write   # required to create GitHub Releases
+
+jobs:
+  changelog-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed to walk tags and commits
+
+      - name: Determine previous tag
+        id: prev
+        run: |
+          CURRENT="${GITHUB_REF_NAME}"
+          echo "Current tag: $CURRENT"
+
+          # Get the tag just before the current one (by commit date)
+          PREVIOUS=$(git tag --sort=-creatordate | grep -v "^${CURRENT}$" | head -n 1 || true)
+
+          if [ -z "$PREVIOUS" ]; then
+            echo "No previous tag found — changelog will include all commits."
+            PREVIOUS=$(git rev-list --max-parents=0 HEAD)   # root commit
+          fi
+
+          echo "previous=$PREVIOUS" >> "$GITHUB_OUTPUT"
+          echo "Previous ref: $PREVIOUS"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV="${{ steps.prev.outputs.previous }}"
+          CURRENT="${GITHUB_REF_NAME}"
+
+          echo "## What changed" > changelog.md
+          echo "" >> changelog.md
+
+          # List commits between previous ref and current tag
+          git log "${PREV}..${CURRENT}" --pretty=format:"- %s (%h)" --no-merges >> changelog.md || true
+
+          COMMIT_COUNT=$(git log "${PREV}..${CURRENT}" --oneline --no-merges | wc -l | tr -d ' ')
+          echo "" >> changelog.md
+          echo "" >> changelog.md
+          echo "---" >> changelog.md
+          echo "*${COMMIT_COUNT} commit(s) since \`${PREV}\`*" >> changelog.md
+
+          echo "Generated changelog with $COMMIT_COUNT commits:"
+          cat changelog.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "Creating GitHub Release for $TAG ..."
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file changelog.md \
+            --latest
+
+          echo "Release created: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"

@@ -1,0 +1,71 @@
+name: tag-hotfix
+
+# ──────────────────────────────────────────────────────────────
+# Scenario: Hotfix pipeline with matrix testing
+#
+# Tag format:  hotfix-<description>
+# Examples:    hotfix-issue-123, hotfix-login-crash, hotfix-null-ptr
+#
+# When a hotfix tag is pushed, this workflow:
+#   1. Runs a matrix of tests across multiple OS + Node versions
+#   2. Only if ALL matrix cells pass, proceeds to patch
+# ──────────────────────────────────────────────────────────────
+
+on:
+  push:
+    tags:
+      - "hotfix-*"
+
+jobs:
+  # ── Step 1: Matrix test across platforms ──
+  test-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ["18", "20", "22"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Print test context
+        run: |
+          echo "Hotfix tag:   ${GITHUB_REF_NAME}"
+          echo "OS:           ${{ matrix.os }}"
+          echo "Node version: ${{ matrix.node }}"
+
+      - name: Simulate tests
+        run: |
+          echo "Running unit tests for hotfix ${GITHUB_REF_NAME}..."
+          echo "All tests passed on ${{ matrix.os }} / Node ${{ matrix.node }}"
+
+  # ── Step 2: Patch — only runs when the full matrix is green ──
+  patch:
+    needs: test-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract hotfix details
+        id: info
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          DESCRIPTION="${TAG#hotfix-}"
+          echo "description=$DESCRIPTION" >> "$GITHUB_OUTPUT"
+          echo "Hotfix: $DESCRIPTION"
+
+      - name: Apply patch
+        run: |
+          echo "All 9 matrix cells passed (3 OS x 3 Node versions)."
+          echo "Applying hotfix: ${{ steps.info.outputs.description }}"
+          echo "Commit: ${GITHUB_SHA}"
+          echo ""
+          echo "In a real pipeline this step would:"
+          echo "  - Cherry-pick the fix to release branches"
+          echo "  - Build and publish patched artefacts"
+          echo "  - Notify the on-call team"
