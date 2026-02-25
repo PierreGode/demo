@@ -155,3 +155,5 @@ git push origin release-2024.02
 ```
 
 Then check the **Actions** tab in your GitHub repository to see the workflows run.
+
+> **Important:** Tags must point to a commit that comes *after* the commit that introduced the workflow files. If you tag the same commit that added the workflow YAML, GitHub will not trigger the pipeline.
